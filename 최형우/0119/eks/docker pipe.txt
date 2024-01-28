@@ -1,0 +1,65 @@
+pipeline {
+    options {
+        timeout(time: 1, unit: 'HOURS')
+    }
+    
+    agent any
+
+    environment {
+        IMAGE_NAME = 'my-api-server'
+        DOCKERHUB_REPOSITORY = 'drogva/httpd/general' 
+        DOCKER_USERNAME = 'drogva'
+        DOCKER_PASSWORD = credentials('docker-hub-credentials-id')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git credentialsId: 'drogva', url: 'https://github.com/drogva/jen.git', branch: 'main'
+            }
+        }
+
+        stage('Build and Push image using Jib') {
+            steps {
+                script {
+                    sh 'echo Check ECR Private Repository'
+                    def ecrRepoExists = sh(script: "aws ecr describe-repositories --repository-names ${env.IMAGE_NAME} --region ${env.AWS_REGION} || true", returnStatus: true).trim()
+
+                    if (ecrRepoExists != 0) {
+                        sh 'echo ECR Repository does not exist, create it'
+                        sh "aws ecr create-repository --repository-name ${env.IMAGE_NAME} --region ${env.AWS_REGION}"
+                    }
+
+                    sh 'echo jib build and push'
+                    def ecrLoginResult = ecrLogin()
+                    env.ECR_PASSWORD = ecrLoginResult.split("-p ")[1].split(" ")[0]
+                    sh "./gradlew jib -Pprofile=prod -Djib.to.image=${ECR_REPOSITORY}/${IMAGE_NAME}:latest -Djib.to.auth.username=AWS -Djib.to.auth.password=${ECR_PASSWORD}"
+
+                    // Docker Login to Docker Hub
+                    withCredentials([usernamePassword(credentialsId: 'docker', passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
+                        sh "docker login -u ${DOCKER_USERNAME} -p ${DOCKER_PASSWORD}"
+
+                        // Build and push Docker image using Jib to Docker Hub
+                        sh "./gradlew jib --image=${DOCKERHUB_REPOSITORY}/${IMAGE_NAME}:latest"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Docker image build and push succeeded!'
+        }
+        failure {
+            echo 'Docker image build or push failed!'
+        }
+        cleanup {
+            sh 'docker logout'
+        }
+    }
+}
+
+def ecrLogin() {
+    return sh(script: "aws ecr get-login-password --region ${AWS_REGION}", returnStdout: true).trim()
+}

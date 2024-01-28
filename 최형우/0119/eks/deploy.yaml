@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-boot-load
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: spring-boot-load
+  template:
+    metadata:
+      labels:
+        app: spring-boot-load
+    spec:
+      containers:
+        - name: spring-boot-load
+          image: drogva/oh:latest
+          imagePullPolicy: Always
+          ports:
+            - protocol: TCP
+              containerPort: 8080
